@@ -34,6 +34,7 @@ import {
   createDaemonEnv,
   createHostDaemonJoinEnv,
   readBbAppPackageVersion,
+  resolveServerListenerUrl,
   runBundledCliCommand,
   superviseFullStackProcesses,
   terminateManagedFullStackProcesses,
@@ -777,6 +778,29 @@ describe("bb-app launcher", () => {
     expect(runtime.serverEnv.BB_SERVER_BIND_HOST).toBe("0.0.0.0");
   });
 
+  it("reports the wildcard listener without changing the loopback connection URL", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-bind-reporting-"));
+    const runtime = await resolveBbAppRuntimeState({
+      entrypointUrl: pathToFileURL("/repo/packages/bb-app/dist/bb-app.js").href,
+      env: {
+        BB_DATA_DIR: dataDir,
+        BB_SERVER_BIND_HOST: "0.0.0.0",
+        BB_SERVER_PORT: "48886",
+      },
+      homeDir: "/home/tester",
+      options: { help: false },
+      serverUrlMode: "local",
+    });
+
+    expect(
+      resolveServerListenerUrl({
+        bindHost: runtime.serverEnv.BB_SERVER_BIND_HOST,
+        port: runtime.context.serverPort,
+      }),
+    ).toBe("http://0.0.0.0:48886");
+    expect(runtime.context.serverUrl).toBe("http://127.0.0.1:48886");
+  });
+
   it("strips parent thread context from the production server without stripping the CLI", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bb-app-thread-context-"));
     const runtime = await resolveBbAppRuntimeState({
@@ -1328,6 +1352,29 @@ describe("bb-app launcher", () => {
     expect(statSync(join(dataDir, "env.json")).mode & 0o777).toBe(0o600);
   });
 
+  it("persists a valid server bind host from the env command", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-bind-env-command-"));
+
+    await runBbApp([
+      "--data-dir",
+      dataDir,
+      "--server-port",
+      "49171",
+      "env",
+      "set",
+      "BB_SERVER_BIND_HOST",
+      "0.0.0.0",
+    ]);
+
+    expect(JSON.parse(readFileSync(join(dataDir, "env.json"), "utf8"))).toEqual(
+      {
+        env: {
+          BB_SERVER_BIND_HOST: "0.0.0.0",
+        },
+      },
+    );
+  });
+
   it("rejects invalid server bind hosts before writing managed env", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bb-app-invalid-bind-env-"));
     const envPath = join(dataDir, "env.json");
@@ -1429,6 +1476,28 @@ describe("bb-app launcher", () => {
     });
 
     expect(runtime.serverEnv.BB_SERVER_BIND_HOST).toBe("127.0.0.1");
+  });
+
+  it("uses the managed server bind host over the ambient environment", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-bind-host-precedence-"));
+    writeFileSync(
+      join(dataDir, "env.json"),
+      JSON.stringify({ env: { BB_SERVER_BIND_HOST: "0.0.0.0" } }),
+      "utf8",
+    );
+
+    const runtime = await resolveBbAppRuntimeState({
+      entrypointUrl: pathToFileURL("/repo/packages/bb-app/dist/bb-app.js").href,
+      env: {
+        BB_DATA_DIR: dataDir,
+        BB_SERVER_BIND_HOST: "127.0.0.1",
+      },
+      homeDir: "/home/tester",
+      options: { help: false },
+      serverUrlMode: "local",
+    });
+
+    expect(runtime.serverEnv.BB_SERVER_BIND_HOST).toBe("0.0.0.0");
   });
 
   it("unsets managed env values", async () => {

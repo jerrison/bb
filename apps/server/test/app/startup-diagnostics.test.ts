@@ -67,4 +67,40 @@ describe("server startup diagnostics", () => {
       });
     }
   });
+
+  it("binds the explicit wildcard listener to IPv4 only", async () => {
+    const serverConfig = loadServerConfig({
+      env: {
+        BB_DATA_DIR: "/tmp/bb-server-wildcard-listener-test",
+        BB_HOST_DAEMON_PORT: "49164",
+        BB_SERVER_BIND_HOST: "0.0.0.0",
+        BB_SERVER_PORT: "49163",
+        NODE_ENV: "development",
+      },
+    });
+    const server = startHttpListener({
+      fetch: () => new Response("ok"),
+      serverConfig: { ...serverConfig, BB_SERVER_PORT: 0 },
+    });
+
+    try {
+      if (!server.listening) {
+        await once(server, "listening");
+      }
+      expect(server.address()).toMatchObject({
+        address: "0.0.0.0",
+        family: "IPv4",
+      });
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => {
+          if (error) {
+            rejectClose(error);
+            return;
+          }
+          resolveClose();
+        });
+      });
+    }
+  });
 });
